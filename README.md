@@ -35,34 +35,34 @@ LoRA adapters will be saved to `./Llama3_1_8B/lora_single_device/`.
 ### Base Model
 
 ```bash
-python inference.py --mode base --input data_tldr/test.jsonl --output results_base.csv
+python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl
 ```
 
 ### LoRA Fine-tuned Model
 
 ```bash
-python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.csv
+python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl
 ```
 
 ### With sample limit (for testing)
 
 ```bash
-python inference.py --mode base --input data_tldr/test.jsonl --output results_base.csv --max_samples 100
-python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.csv --max_samples 100
+python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl --max_samples 100
+python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl --max_samples 100
 ```
 
 ## 6. Run LLM-as-a-Judge Evaluation
 
 ```bash
-python judge.py --base_results results_base.csv --lora_results results_lora.csv --output judge_results.csv
+python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl
 ```
 
 ### With sample limit
 
 ```bash
-python judge.py --base_results results_base.csv --lora_results results_lora.csv --output judge_results.csv --max_samples 100
+python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl --max_samples 100
 ```
 
 Results:
-- `judge_results.csv` — detailed comparison results
+- `judge_results.jsonl` — detailed comparison results
 - `judge_results_stats.json` — summary statistics (win rates, average scores)

@@ -3,19 +3,20 @@ Inference script for Llama 3.1-8B-Instruct model.
 Supports two modes: base model and LoRA fine-tuned model.
 
 Usage:
-    python inference.py --mode base --input data_tldr/test.jsonl --output results_base.csv
-    python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.csv
+    python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl
+    python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl
 """
 
 import argparse
 import json
-import csv
 import os
+import glob
 from tqdm import tqdm
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
+from peft import LoraConfig, get_peft_model
+from safetensors.torch import load_file
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -26,6 +27,70 @@ def load_jsonl(path: str) -> list[dict]:
             if line.strip():
                 data.append(json.loads(line))
     return data
+
+
+def save_jsonl(data: list[dict], path: str):
+    """Save data to JSONL file."""
+    os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for item in data:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    print(f"Results saved to {path}")
+
+
+def load_torchtune_lora_weights(adapter_path: str) -> dict:
+    """
+    Load LoRA weights saved by torchtune.
+    Torchtune saves adapters as safetensors files.
+    """
+    # Find all safetensors files in the adapter directory
+    safetensor_files = glob.glob(os.path.join(adapter_path, "*.safetensors"))
+    
+    if not safetensor_files:
+        raise FileNotFoundError(f"No safetensors files found in {adapter_path}")
+    
+    # Load all weights
+    all_weights = {}
+    for sf_file in safetensor_files:
+        print(f"Loading weights from {sf_file}...")
+        weights = load_file(sf_file)
+        all_weights.update(weights)
+    
+    return all_weights
+
+
+def convert_torchtune_to_peft_keys(torchtune_weights: dict) -> dict:
+    """
+    Convert torchtune LoRA weight keys to PEFT format.
+    
+    Torchtune format: 'layers.0.attn.q_proj.lora_a.weight'
+    PEFT format: 'base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight'
+    """
+    peft_weights = {}
+    
+    for key, value in torchtune_weights.items():
+        # Skip non-lora weights
+        if 'lora_a' not in key and 'lora_b' not in key:
+            continue
+        
+        new_key = key
+        
+        # Torchtune uses 'attn' but HF uses 'self_attn'
+        new_key = new_key.replace(".attn.", ".self_attn.")
+        
+        # Torchtune uses 'output_proj' but HF uses 'o_proj'
+        new_key = new_key.replace(".output_proj.", ".o_proj.")
+        
+        # Add PEFT prefix
+        new_key = "base_model.model.model." + new_key
+        
+        # Convert lora_a -> lora_A.default, lora_b -> lora_B.default
+        new_key = new_key.replace(".lora_a.", ".lora_A.default.")
+        new_key = new_key.replace(".lora_b.", ".lora_B.default.")
+        
+        peft_weights[new_key] = value
+    
+    return peft_weights
 
 
 def load_model_and_tokenizer(
@@ -62,7 +127,52 @@ def load_model_and_tokenizer(
     # Load LoRA adapters if specified
     if lora_adapter_path is not None:
         print(f"Loading LoRA adapters from {lora_adapter_path}...")
-        model = PeftModel.from_pretrained(model, lora_adapter_path)
+        
+        # Load torchtune weights
+        torchtune_weights = load_torchtune_lora_weights(lora_adapter_path)
+        print(f"Loaded {len(torchtune_weights)} weight tensors from torchtune checkpoint")
+        
+        # Create PEFT LoRA config matching torchtune config
+        # From llama3_1_8B_lora_single_device.yaml:
+        # lora_attn_modules: ['q_proj', 'v_proj', 'output_proj']
+        # apply_lora_to_mlp: True
+        # lora_rank: 8
+        # lora_alpha: 16
+        lora_config = LoraConfig(
+            r=8,
+            lora_alpha=16,
+            lora_dropout=0.0,
+            target_modules=[
+                "q_proj", "v_proj", "o_proj",  # attention (output_proj = o_proj in HF)
+                "gate_proj", "up_proj", "down_proj",  # MLP
+            ],
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        
+        # Apply LoRA to model
+        model = get_peft_model(model, lora_config)
+        
+        # Convert and load weights
+        peft_weights = convert_torchtune_to_peft_keys(torchtune_weights)
+        print(f"Converted to {len(peft_weights)} PEFT weight tensors")
+        
+        # Load state dict
+        missing, unexpected = model.load_state_dict(peft_weights, strict=False)
+        
+        if missing:
+            # Filter out non-lora missing keys (expected)
+            lora_missing = [k for k in missing if 'lora' in k.lower()]
+            if lora_missing:
+                print(f"Warning: Missing LoRA keys: {len(lora_missing)}")
+                for k in lora_missing[:5]:
+                    print(f"  - {k}")
+        
+        if unexpected:
+            print(f"Warning: Unexpected keys: {len(unexpected)}")
+            for k in unexpected[:5]:
+                print(f"  - {k}")
+        
         print("LoRA adapters loaded successfully!")
     
     model.eval()
@@ -161,18 +271,6 @@ def run_inference(
     return results
 
 
-def save_results_csv(results: list[dict], output_path: str):
-    """Save results to CSV file."""
-    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-    
-    with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["input", "model_output", "ground_truth"])
-        writer.writeheader()
-        writer.writerows(results)
-    
-    print(f"Results saved to {output_path}")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Llama 3.1-8B Inference Script")
     
@@ -196,7 +294,7 @@ def main():
         "--output",
         type=str,
         default=None,
-        help="Path to output CSV file (default: results_{mode}.csv)"
+        help="Path to output JSONL file (default: results_{mode}.jsonl)"
     )
     parser.add_argument(
         "--base_model_path",
@@ -220,7 +318,7 @@ def main():
     
     # Set default output path based on mode
     if args.output is None:
-        args.output = f"results_{args.mode}.csv"
+        args.output = f"results_{args.mode}.jsonl"
     
     # Load data
     print(f"Loading data from {args.input}...")
@@ -251,7 +349,7 @@ def main():
     )
     
     # Save results
-    save_results_csv(results, args.output)
+    save_jsonl(results, args.output)
     
     print(f"\nInference completed!")
     print(f"Mode: {args.mode}")

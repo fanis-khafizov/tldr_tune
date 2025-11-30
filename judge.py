@@ -3,11 +3,10 @@ LLM-as-a-Judge script using Qwen3-14B for comparing model outputs.
 Compares responses from base model vs LoRA fine-tuned model.
 
 Usage:
-    python judge.py --base_results results_base.csv --lora_results results_lora.csv --output judge_results.csv
+    python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl
 """
 
 import argparse
-import csv
 import json
 import os
 from tqdm import tqdm
@@ -50,13 +49,13 @@ Please evaluate both summaries and respond in the following JSON format only:
 Respond with only the JSON, no additional text."""
 
 
-def load_csv_results(path: str) -> list[dict]:
-    """Load results from CSV file."""
+def load_jsonl(path: str) -> list[dict]:
+    """Load data from JSONL file."""
     data = []
     with open(path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            data.append(row)
+        for line in f:
+            if line.strip():
+                data.append(json.loads(line))
     return data
 
 
@@ -258,7 +257,7 @@ def run_judging(
         
         # Add to results
         judgments.append({
-            "original_post": original_post[:500],  # Truncate for CSV
+            "original_post": original_post,
             "ground_truth": ground_truth,
             "summary_base": summary_a,
             "summary_lora": summary_b,
@@ -271,21 +270,13 @@ def run_judging(
     return judgments
 
 
-def save_judgments_csv(judgments: list[dict], output_path: str):
-    """Save judgments to CSV file."""
-    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-    
-    fieldnames = [
-        "original_post", "ground_truth", "summary_base", "summary_lora",
-        "score_base", "score_lora", "winner", "reasoning"
-    ]
-    
-    with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(judgments)
-    
-    print(f"Judgments saved to {output_path}")
+def save_jsonl(data: list[dict], path: str):
+    """Save data to JSONL file."""
+    os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for item in data:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+    print(f"Results saved to {path}")
 
 
 def compute_statistics(judgments: list[dict]) -> dict:
@@ -322,20 +313,20 @@ def main():
     parser.add_argument(
         "--base_results",
         type=str,
-        default="results_base.csv",
-        help="Path to CSV file with base model results"
+        default="results_base.jsonl",
+        help="Path to JSONL file with base model results"
     )
     parser.add_argument(
         "--lora_results",
         type=str,
-        default="results_lora.csv",
-        help="Path to CSV file with LoRA model results"
+        default="results_lora.jsonl",
+        help="Path to JSONL file with LoRA model results"
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="judge_results.csv",
-        help="Path to output CSV file with judgments"
+        default="judge_results.jsonl",
+        help="Path to output JSONL file with judgments"
     )
     
     # Model settings
@@ -353,11 +344,11 @@ def main():
     
     # Load results
     print(f"Loading base model results from {args.base_results}...")
-    base_results = load_csv_results(args.base_results)
+    base_results = load_jsonl(args.base_results)
     print(f"Loaded {len(base_results)} base model results")
     
     print(f"Loading LoRA model results from {args.lora_results}...")
-    lora_results = load_csv_results(args.lora_results)
+    lora_results = load_jsonl(args.lora_results)
     print(f"Loaded {len(lora_results)} LoRA model results")
     
     # Limit samples if specified
@@ -376,7 +367,7 @@ def main():
     judgments = run_judging(model, tokenizer, base_results, lora_results)
     
     # Save results
-    save_judgments_csv(judgments, args.output)
+    save_jsonl(judgments, args.output)
     
     # Print statistics
     stats = compute_statistics(judgments)
@@ -392,7 +383,7 @@ def main():
     print("=" * 50)
     
     # Save statistics to JSON
-    stats_path = args.output.replace(".csv", "_stats.json")
+    stats_path = args.output.replace(".jsonl", "_stats.json")
     with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2)
     print(f"\nStatistics saved to {stats_path}")
