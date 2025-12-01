@@ -1,5 +1,5 @@
 """
-Inference script for Llama 3.1-8B-Instruct model.
+Inference script for Llama 3.1-8B-Instruct model using torchtune.
 Supports two modes: base model and LoRA fine-tuned model.
 
 Usage:
@@ -10,13 +10,13 @@ Usage:
 import argparse
 import json
 import os
-import glob
 from tqdm import tqdm
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import LoraConfig, get_peft_model
-from safetensors.torch import load_file
+from torchtune.models.llama3_1 import llama3_1_8b, lora_llama3_1_8b
+from torchtune.models.llama3 import llama3_tokenizer
+from torchtune.training import FullModelHFCheckpointer
+from torchtune.generation import generate
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -38,68 +38,13 @@ def save_jsonl(data: list[dict], path: str):
     print(f"Results saved to {path}")
 
 
-def load_torchtune_lora_weights(adapter_path: str) -> dict:
-    """
-    Load LoRA weights saved by torchtune.
-    Torchtune saves adapters as safetensors files.
-    """
-    # Find all safetensors files in the adapter directory
-    safetensor_files = glob.glob(os.path.join(adapter_path, "*.safetensors"))
-    
-    if not safetensor_files:
-        raise FileNotFoundError(f"No safetensors files found in {adapter_path}")
-    
-    # Load all weights
-    all_weights = {}
-    for sf_file in safetensor_files:
-        print(f"Loading weights from {sf_file}...")
-        weights = load_file(sf_file)
-        all_weights.update(weights)
-    
-    return all_weights
-
-
-def convert_torchtune_to_peft_keys(torchtune_weights: dict) -> dict:
-    """
-    Convert torchtune LoRA weight keys to PEFT format.
-    
-    Torchtune format: 'layers.0.attn.q_proj.lora_a.weight'
-    PEFT format: 'base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight'
-    """
-    peft_weights = {}
-    
-    for key, value in torchtune_weights.items():
-        # Skip non-lora weights
-        if 'lora_a' not in key and 'lora_b' not in key:
-            continue
-        
-        new_key = key
-        
-        # Torchtune uses 'attn' but HF uses 'self_attn'
-        new_key = new_key.replace(".attn.", ".self_attn.")
-        
-        # Torchtune uses 'output_proj' but HF uses 'o_proj'
-        new_key = new_key.replace(".output_proj.", ".o_proj.")
-        
-        # Add PEFT prefix
-        new_key = "base_model.model.model." + new_key
-        
-        # Convert lora_a -> lora_A.default, lora_b -> lora_B.default
-        new_key = new_key.replace(".lora_a.", ".lora_A.default.")
-        new_key = new_key.replace(".lora_b.", ".lora_B.default.")
-        
-        peft_weights[new_key] = value
-    
-    return peft_weights
-
-
 def load_model_and_tokenizer(
     base_model_path: str,
     lora_adapter_path: str | None = None,
     device: str = "cuda",
 ):
     """
-    Load Llama model and tokenizer.
+    Load Llama model and tokenizer using torchtune.
     
     Args:
         base_model_path: Path to the base Llama model
@@ -109,73 +54,64 @@ def load_model_and_tokenizer(
     Returns:
         model, tokenizer
     """
-    print(f"Loading tokenizer from {base_model_path}...")
-    tokenizer = AutoTokenizer.from_pretrained(base_model_path)
+    # Load tokenizer
+    tokenizer_path = os.path.join(base_model_path, "original", "tokenizer.model")
+    print(f"Loading tokenizer from {tokenizer_path}...")
+    tokenizer = llama3_tokenizer(path=tokenizer_path)
     
-    # Set padding token if not set
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    # Checkpoint files
+    checkpoint_files = [
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+    ]
     
-    print(f"Loading base model from {base_model_path}...")
-    model = AutoModelForCausalLM.from_pretrained(
-        base_model_path,
-        torch_dtype=torch.bfloat16,
-        device_map="auto" if device == "cuda" else None,
-        trust_remote_code=True,
-    )
-    
-    # Load LoRA adapters if specified
     if lora_adapter_path is not None:
-        print(f"Loading LoRA adapters from {lora_adapter_path}...")
-        
-        # Load torchtune weights
-        torchtune_weights = load_torchtune_lora_weights(lora_adapter_path)
-        print(f"Loaded {len(torchtune_weights)} weight tensors from torchtune checkpoint")
-        
-        # Create PEFT LoRA config matching torchtune config
-        # From llama3_1_8B_lora_single_device.yaml:
-        # lora_attn_modules: ['q_proj', 'v_proj', 'output_proj']
-        # apply_lora_to_mlp: True
-        # lora_rank: 8
-        # lora_alpha: 16
-        lora_config = LoraConfig(
-            r=8,
+        # Load model with LoRA architecture
+        print("Creating LoRA model...")
+        model = lora_llama3_1_8b(
+            lora_attn_modules=['q_proj', 'v_proj', 'output_proj'],
+            apply_lora_to_mlp=True,
+            apply_lora_to_output=False,
+            lora_rank=8,
             lora_alpha=16,
             lora_dropout=0.0,
-            target_modules=[
-                "q_proj", "v_proj", "o_proj",  # attention (output_proj = o_proj in HF)
-                "gate_proj", "up_proj", "down_proj",  # MLP
-            ],
-            bias="none",
-            task_type="CAUSAL_LM",
         )
         
-        # Apply LoRA to model
-        model = get_peft_model(model, lora_config)
+        # Setup checkpointer with adapter
+        print(f"Loading base model from {base_model_path}...")
+        checkpointer = FullModelHFCheckpointer(
+            checkpoint_dir=base_model_path,
+            checkpoint_files=checkpoint_files,
+            adapter_checkpoint=os.path.join(lora_adapter_path, "epoch_0", "adapter_model.safetensors"),
+            recipe_checkpoint=None,
+            output_dir=lora_adapter_path,
+            model_type="LLAMA3",
+        )
+    else:
+        # Load base model without LoRA
+        print("Creating base model...")
+        model = llama3_1_8b()
         
-        # Convert and load weights
-        peft_weights = convert_torchtune_to_peft_keys(torchtune_weights)
-        print(f"Converted to {len(peft_weights)} PEFT weight tensors")
-        
-        # Load state dict
-        missing, unexpected = model.load_state_dict(peft_weights, strict=False)
-        
-        if missing:
-            # Filter out non-lora missing keys (expected)
-            lora_missing = [k for k in missing if 'lora' in k.lower()]
-            if lora_missing:
-                print(f"Warning: Missing LoRA keys: {len(lora_missing)}")
-                for k in lora_missing[:5]:
-                    print(f"  - {k}")
-        
-        if unexpected:
-            print(f"Warning: Unexpected keys: {len(unexpected)}")
-            for k in unexpected[:5]:
-                print(f"  - {k}")
-        
-        print("LoRA adapters loaded successfully!")
+        print(f"Loading base model from {base_model_path}...")
+        checkpointer = FullModelHFCheckpointer(
+            checkpoint_dir=base_model_path,
+            checkpoint_files=checkpoint_files,
+            recipe_checkpoint=None,
+            output_dir=os.path.join(base_model_path, "output"),
+            model_type="LLAMA3",
+        )
     
+    # Load weights
+    checkpoint_dict = checkpointer.load_checkpoint()
+    model.load_state_dict(checkpoint_dict["model"], strict=False)
+    
+    # Move to device and set dtype
+    model = model.to(device=device, dtype=torch.bfloat16)
     model.eval()
+    
+    print("Model loaded successfully!")
     return model, tokenizer
 
 
@@ -185,42 +121,31 @@ def generate_response(
     prompt: str,
     max_new_tokens: int = 128,
     temperature: float = 0.7,
-    top_p: float = 0.9,
-    do_sample: bool = True,
+    top_k: int = 50,
+    device: str = "cuda",
 ) -> str:
     """
-    Generate response for a given prompt.
-    
-    Args:
-        model: The language model
-        tokenizer: The tokenizer
-        prompt: Input prompt
-        max_new_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        top_p: Top-p sampling parameter
-        do_sample: Whether to use sampling
-    
-    Returns:
-        Generated text (response only, without the prompt)
+    Generate response for a given prompt using torchtune generate.
     """
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    # Tokenize prompt
+    tokens = tokenizer.encode(prompt, add_bos=True, add_eos=False)
+    prompt_tensor = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
     
+    # Generate
     with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature if do_sample else None,
-            top_p=top_p if do_sample else None,
-            do_sample=do_sample,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+        generated_tokens, _ = generate(
+            model=model,
+            prompt=prompt_tensor,
+            max_generated_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            pad_id=tokenizer.pad_id if hasattr(tokenizer, 'pad_id') else 0,
+            eos_id=tokenizer.eos_id if hasattr(tokenizer, 'eos_id') else tokenizer.stop_tokens[0] if hasattr(tokenizer, 'stop_tokens') else 128001,
         )
     
-    # Decode only the generated part (excluding the input prompt)
-    input_length = inputs["input_ids"].shape[1]
-    generated_tokens = outputs[0][input_length:]
-    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    # Decode only the generated part
+    generated_tokens = generated_tokens[0, len(tokens):].tolist()
+    response = tokenizer.decode(generated_tokens)
     
     return response.strip()
 
@@ -231,21 +156,11 @@ def run_inference(
     data: list[dict],
     max_new_tokens: int = 128,
     temperature: float = 0.7,
+    device: str = "cuda",
     show_progress: bool = True,
 ) -> list[dict]:
     """
     Run inference on a list of examples.
-    
-    Args:
-        model: The language model
-        tokenizer: The tokenizer
-        data: List of dicts with 'input' and 'output' (ground truth) keys
-        max_new_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        show_progress: Whether to show progress bar
-    
-    Returns:
-        List of dicts with 'input', 'model_output', 'ground_truth' keys
     """
     results = []
     iterator = tqdm(data, desc="Generating responses") if show_progress else data
@@ -260,6 +175,7 @@ def run_inference(
             prompt,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
+            device=device,
         )
         
         results.append({
@@ -272,7 +188,7 @@ def run_inference(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Llama 3.1-8B Inference Script")
+    parser = argparse.ArgumentParser(description="Llama 3.1-8B Inference Script (torchtune)")
     
     # Mode selection
     parser.add_argument(
@@ -312,7 +228,9 @@ def main():
     # Generation parameters
     parser.add_argument("--max_new_tokens", type=int, default=128, help="Maximum tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
+    parser.add_argument("--top_k", type=int, default=50, help="Top-k sampling")
     parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of samples to process")
+    parser.add_argument("--device", type=str, default="cuda", help="Device to use")
     
     args = parser.parse_args()
     
@@ -335,6 +253,7 @@ def main():
     model, tokenizer = load_model_and_tokenizer(
         base_model_path=args.base_model_path,
         lora_adapter_path=lora_path,
+        device=args.device,
     )
     
     print(f"\nRunning inference in '{args.mode}' mode...")
@@ -346,6 +265,7 @@ def main():
         data,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
+        device=args.device,
     )
     
     # Save results
