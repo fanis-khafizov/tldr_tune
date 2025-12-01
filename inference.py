@@ -40,6 +40,7 @@ def save_jsonl(data: list[dict], path: str):
 
 def load_model_and_tokenizer(
     base_model_path: str,
+    output_path: str,
     lora_adapter_path: str | None = None,
     device: str = "cuda",
 ):
@@ -86,7 +87,7 @@ def load_model_and_tokenizer(
             checkpoint_files=checkpoint_files,
             adapter_checkpoint=os.path.join(lora_adapter_path, "epoch_0", "adapter_model.safetensors"),
             recipe_checkpoint=None,
-            output_dir=lora_adapter_path,
+            output_dir=output_path,
             model_type="LLAMA3",
         )
     else:
@@ -99,7 +100,7 @@ def load_model_and_tokenizer(
             checkpoint_dir=base_model_path,
             checkpoint_files=checkpoint_files,
             recipe_checkpoint=None,
-            output_dir=os.path.join(base_model_path, "output"),
+            output_dir=output_path,
             model_type="LLAMA3",
         )
     
@@ -139,8 +140,7 @@ def generate_response(
             max_generated_tokens=max_new_tokens,
             temperature=temperature,
             top_k=top_k,
-            pad_id=tokenizer.pad_id if hasattr(tokenizer, 'pad_id') else 0,
-            eos_id=tokenizer.eos_id if hasattr(tokenizer, 'eos_id') else tokenizer.stop_tokens[0] if hasattr(tokenizer, 'stop_tokens') else 128001,
+            pad_id=tokenizer.pad_id if hasattr(tokenizer, 'pad_id') else 0
         )
     
     # Decode only the generated part
@@ -221,8 +221,14 @@ def main():
     parser.add_argument(
         "--lora_adapter_path",
         type=str,
-        default="./Llama3_1_8B/lora_single_device",
+        default=None,
         help="Path to LoRA adapters (used only in 'lora' mode)"
+    )
+    parser.add_argument(
+        "--output_path",
+        type=str,
+        default="./output_dir",
+        help="Path to checkpoint output"
     )
     
     # Generation parameters
@@ -252,6 +258,7 @@ def main():
     lora_path = args.lora_adapter_path if args.mode == "lora" else None
     model, tokenizer = load_model_and_tokenizer(
         base_model_path=args.base_model_path,
+        output_path=args.output_path,
         lora_adapter_path=lora_path,
         device=args.device,
     )

@@ -35,32 +35,32 @@ LoRA adapters will be saved to `./Llama3_1_8B/lora_single_device/`.
 ### Base Model
 
 ```bash
-python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl
+CUDA_VISIBLE_DEVICES=0 python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl
 ```
 
 ### LoRA Fine-tuned Model
 
 ```bash
-python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl
+CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl --lora_adapter_path ./Llama3_1_8B/lora_single_device
 ```
 
 ### With sample limit (for testing)
 
 ```bash
-python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl --max_samples 100
-python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl --max_samples 100
+CUDA_VISIBLE_DEVICES=0 python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl --max_samples 100
+CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl --max_samples 100 --lora_adapter_path ./Llama3_1_8B/lora_single_device
 ```
 
 ## 6. Run LLM-as-a-Judge Evaluation
 
 ```bash
-python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl
+CUDA_VISIBLE_DEVICES=0 python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl
 ```
 
 ### With sample limit
 
 ```bash
-python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl --max_samples 100
+CUDA_VISIBLE_DEVICES=0 python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl --max_samples 100
 ```
 
 Results:

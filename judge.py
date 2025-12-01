@@ -111,7 +111,7 @@ def load_judge_model(
     print(f"Loading judge model from {model_path}...")
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto" if device == "cuda" else None,
         trust_remote_code=True,
     )
