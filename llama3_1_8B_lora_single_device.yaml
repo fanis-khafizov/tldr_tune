@@ -1,5 +1,4 @@
-output_dir: ./Llama3_1_8B/lora_single_device
-
+output_dir: ./LoRA
 # Model Arguments
 model:
   _component_: torchtune.models.llama3_1.lora_llama3_1_8b
@@ -13,12 +12,12 @@ model:
 # Tokenizer
 tokenizer:
   _component_: torchtune.models.llama3.llama3_tokenizer
-  path: ./Llama-3.1-8B-Instruct/original/tokenizer.model
-  max_seq_len: 4096
+  path: ./Llama-3.1-8B/original/tokenizer.model
+  max_seq_len: 2048
 
 checkpointer:
   _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: ./Llama-3.1-8B-Instruct
+  checkpoint_dir: ./Llama-3.1-8B
   checkpoint_files: [
     model-00001-of-00004.safetensors,
     model-00002-of-00004.safetensors,
@@ -35,9 +34,12 @@ save_adapter_weights_only: True
 dataset:
   _component_: torchtune.datasets.instruct_dataset
   source: json
-  data_files:
-    train: "./data_tldr/train.jsonl"
-    validation: "./data_tldr/validation.jsonl"
+  data_files: "./data_tldr/train.jsonl"
+  column_map:
+    input: input
+    output: output
+  train_on_input: False
+  packed: True
 
 # Optimizer and Scheduler
 optimizer:
@@ -56,9 +58,9 @@ loss:
 seed: 42
 shuffle: true
 epochs: 1
-batch_size: 64
+batch_size: 16
 max_steps_per_epoch: null
-gradient_accumulation_steps: 1  # Use to increase effective batch size
+gradient_accumulation_steps: 4  # Use to increase effective batch size
 clip_grad_norm: null
 compile: True  # torch.compile the model + loss, True increases speed + decreases memory
 num_workers: 4
@@ -73,7 +75,7 @@ eval_batch_size: 8
 metric_logger:
   _component_: torchtune.training.metric_logging.WandBLogger
   project: tldr_tune
-  name: lora_8  # опционально
+  name: llama_3.1_lora_sft  # опционально
   # entity: your_wandb_username_or_team  # опционально
 log_every_n_steps: 1
 log_peak_memory_stats: true
@@ -84,7 +86,7 @@ dtype: bf16
 
 # Activations Memory
 enable_activation_checkpointing: True  # True reduces memory
-enable_activation_offloading: True  # True reduces memory
+enable_activation_offloading: False  # True reduces memory
 
 
 # Profiler (disabled)

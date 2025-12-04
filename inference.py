@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 import torch
 from torchtune.models.llama3_1 import llama3_1_8b, lora_llama3_1_8b
-from torchtune.models.llama3 import llama3_tokenizer
+from torchtune.models.llama3 import llama3_tokenizer, Llama3Tokenizer
 from torchtune.training import FullModelHFCheckpointer
 from torchtune.generation import generate
 
@@ -111,6 +111,7 @@ def load_model_and_tokenizer(
     # Move to device and set dtype
     model = model.to(device=device, dtype=torch.bfloat16)
     model.eval()
+    # model.compile()
     
     print("Model loaded successfully!")
     return model, tokenizer
@@ -118,7 +119,7 @@ def load_model_and_tokenizer(
 
 def generate_response(
     model,
-    tokenizer,
+    tokenizer: Llama3Tokenizer,
     prompt: str,
     max_new_tokens: int = 128,
     temperature: float = 0.7,
@@ -140,7 +141,8 @@ def generate_response(
             max_generated_tokens=max_new_tokens,
             temperature=temperature,
             top_k=top_k,
-            pad_id=tokenizer.pad_id if hasattr(tokenizer, 'pad_id') else 0
+            pad_id=tokenizer.pad_id,
+            stop_tokens=[tokenizer.eos_id]
         )
     
     # Decode only the generated part
@@ -215,7 +217,7 @@ def main():
     parser.add_argument(
         "--base_model_path",
         type=str,
-        default="./Llama-3.1-8B-Instruct",
+        default="./Llama-3.1-8B",
         help="Path to base Llama model"
     )
     parser.add_argument(

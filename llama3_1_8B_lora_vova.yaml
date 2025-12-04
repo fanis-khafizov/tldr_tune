@@ -1,0 +1,66 @@
+# Config for Single-Device LoRA Finetuning of Llama 3 8B
+output_dir: ./LoRA
+model:
+  _component_: torchtune.models.llama3_1.lora_llama3_1_8b
+  lora_attn_modules: ['q_proj', 'v_proj']
+  apply_lora_to_mlp: False
+  apply_lora_to_output: False
+  lora_rank: 8
+  lora_alpha: 16
+
+# Tokenizer
+tokenizer:
+  _component_: torchtune.models.llama3.llama3_tokenizer
+  path: ./Llama-3.1-8B-Instruct/original/tokenizer.model
+
+# Dataset: Mapping "prompt" -> "input" and "completion" -> "output"
+dataset:
+  _component_: torchtune.datasets.instruct_dataset
+  source: trl-lib/tldr
+  split: train
+  column_map:
+    input: prompt      # The dataset column containing the Reddit post
+    output: completion # The dataset column containing the TL;DR summary
+  train_on_input: False # We only want to train the model to generate the summary, not the post
+  max_seq_len: 2048    # Adjust based on your GPU memory (lower to 1024 if OOM)
+
+checkpointer:
+  _component_: torchtune.training.FullModelMetaCheckpointer
+  checkpoint_dir: ./Llama-3.1-8B-Instruct
+  checkpoint_files: [
+    model-00001-of-00004.safetensors,
+    model-00002-of-00004.safetensors,
+    model-00003-of-00004.safetensors,
+    model-00004-of-00004.safetensors
+  ]
+  recipe_checkpoint: null
+  output_dir: ${output_dir}
+  model_type: LLAMA3
+save_adapter_weights_only: True
+
+seed: null
+shuffle: True
+
+optimizer:
+  _component_: torch.optim.AdamW
+  lr: 3e-4
+  fused: True
+
+loss:
+  _component_: torch.nn.CrossEntropyLoss
+
+batch_size: 2
+epochs: 1
+max_steps_per_epoch: null
+gradient_accumulation_steps: 4  # Simulates a larger batch size (2 * 4 = 8)
+compile: False 
+
+# Logging
+metric_logger:
+  _component_: torchtune.training.metric_logging.WandBLogger
+  project: tldr_tune
+  name: llama_3.1_Instruct_lora_sft  # опционально
+
+device: cuda
+dtype: bf16
+enable_activation_checkpointing: True # Crucial for saving memory
