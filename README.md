@@ -1,68 +1,88 @@
 # TL;DR Fine-tuning Pipeline
 
-## 1. Download Models
+Fine-tuning Llama 3.1 8B Instruct для задачи суммаризации Reddit постов с использованием LoRA.
+
+## Quick Start
 
 ```bash
-hf download Qwen/Qwen3-14B --local-dir ./Qwen3-14B
-hf download meta-llama/Llama-3.1-8B-Instruct --local-dir ./Llama-3.1-8B-Instruct --exclude "original/consolidated*"
-```
+# 1. Установка зависимостей и загрузка моделей (см. SETUP.md)
 
-## 2. Install Flash Attention (optional)
-
-```bash
-wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
-uv pip install flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
-```
-
-## 3. Prepare Dataset
-
-```bash
+# 2. Подготовка датасета
 python save_tldr.py
+
+# 3. Fine-tune (используем python -m т.к. ray перехватывает команду tune)
+CUDA_VISIBLE_DEVICES=0 python -m torchtune._cli.tune run lora_finetune_single_device --config llama3_1_8B_instruct_lora.yaml
+
+# 4. Inference
+CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl \
+    --lora_adapter_path ./outputs/llama3_1_8b_instruct_lora
 ```
 
-This creates `data_tldr/` directory with `train.jsonl`, `validation.jsonl`, and `test.jsonl`.
+## Структура проекта
 
-## 4. Fine-tune with LoRA
+```
+├── Llama-3.1-8B-Instruct/     # Веса базовой модели
+├── Qwen3-32B/                  # Веса модели-судьи
+├── data_tldr/                  # Датасет (train/validation/test.jsonl)
+├── outputs/                    # Результаты обучения
+│   └── llama3_1_8b_instruct_lora/  # LoRA адаптеры
+├── save_tldr.py                # Скрипт подготовки датасета
+├── inference.py                # Скрипт инференса
+├── judge.py                    # LLM-as-a-Judge оценка
+└── llama3_1_8B_instruct_lora.yaml  # Конфиг для обучения
+```
+
+## Обучение
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 tune run lora_finetune_single_device --config llama3_1_8B_lora_single_device.yaml
+CUDA_VISIBLE_DEVICES=0 python -m torchtune._cli.tune run lora_finetune_single_device --config llama3_1_8B_instruct_lora.yaml
 ```
 
-LoRA adapters will be saved to `./Llama3_1_8B/lora_single_device/`.
+LoRA адаптеры сохраняются в `./outputs/llama3_1_8b_instruct_lora/`.
 
-## 5. Run Inference
+## Inference
 
-### Base Model
+### Базовая модель
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl
 ```
 
-### LoRA Fine-tuned Model
+### LoRA модель
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl --lora_adapter_path ./Llama3_1_8B/lora_single_device
+CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl \
+    --lora_adapter_path ./outputs/llama3_1_8b_instruct_lora
 ```
 
-### With sample limit (for testing)
+### Ограничение выборки (для тестов)
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python inference.py --mode base --input data_tldr/test.jsonl --output results_base.jsonl --max_samples 100
-CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl --max_samples 100 --lora_adapter_path ./Llama3_1_8B/lora_single_device
+CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl \
+    --lora_adapter_path ./outputs/llama3_1_8b_instruct_lora_sft --max_samples 10
 ```
 
-## 6. Run LLM-as-a-Judge Evaluation
+## Оценка (LLM-as-a-Judge)
+
+### Стандартная версия (transformers)
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl
+CUDA_VISIBLE_DEVICES=0 python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl \
+    --output judge_results.jsonl
 ```
 
-### With sample limit
+### Быстрая версия (vLLM)
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python judge.py --base_results results_base.jsonl --lora_results results_lora.jsonl --output judge_results.jsonl --max_samples 100
+CUDA_VISIBLE_DEVICES=0 python judge_vllm.py --base_results results_base.jsonl --lora_results results_lora.jsonl \
+    --output judge_results.jsonl
 ```
 
-Results:
-- `judge_results.jsonl` — detailed comparison results
-- `judge_results_stats.json` — summary statistics (win rates, average scores)
+Опциональные параметры:
+- `--max_samples 100` — ограничить количество сэмплов для оценки
+- `--batch_size 32` — размер батча для vLLM (по умолчанию 32)
+- `--judge_model_path ./Qwen3-32B` — путь к модели-судье
+
+Результаты:
+- `judge_results.jsonl` — детальные сравнения
+- `judge_results_stats.json` — статистика (win rates, средние оценки)
