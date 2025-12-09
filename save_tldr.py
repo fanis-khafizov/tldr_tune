@@ -1,29 +1,19 @@
 from datasets import load_dataset
 import json, os
 
-# === 1. Загружаем датасет ===
+from prompts import format_prompt, format_output
+
 ds = load_dataset("trl-lib/tldr")
 
-# === 2. Шаблон для промпта (Alpaca-style) ===
-TEMPLATE = """### Instruction:
-Summarize the following Reddit post in one short sentence (TL;DR).
 
-### Input:
-{post}
-
-### Response:
-"""
-
-# === 3. Обработка одной строки ===
 def map_row(r):
     post = r.get("prompt")
     summary = r.get("completion")
     if not post or not summary:
         return None
-    prompt = TEMPLATE.format(post=post.strip())
-    return {"input": prompt.strip(), "output": summary.strip()}
+    return {"input": format_prompt(post), "output": format_output(summary)}
 
-# === 4. Сохраняем в JSONL ===
+
 base = "data_tldr"
 os.makedirs(base, exist_ok=True)
 splits = {}
