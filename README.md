@@ -10,8 +10,8 @@ Fine-tuning Llama 3.1 8B Instruct для задачи суммаризации R
 # 2. Подготовка датасета
 python save_tldr.py
 
-# 3. Fine-tune (используем python -m т.к. ray перехватывает команду tune)
-CUDA_VISIBLE_DEVICES=0 python -m torchtune._cli.tune run lora_finetune_single_device --config llama3_1_8B_instruct_lora.yaml
+# 3. Fine-tune
+CUDA_VISIBLE_DEVICES=0 python -m tune run lora_finetune_single_device --config llama3_1_8B_instruct_lora.yaml
 
 # 4. Inference
 CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.jsonl --output results_lora.jsonl \
@@ -35,7 +35,7 @@ CUDA_VISIBLE_DEVICES=0 python inference.py --mode lora --input data_tldr/test.js
 ## Обучение
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m torchtune._cli.tune run lora_finetune_single_device --config llama3_1_8B_instruct_lora.yaml
+CUDA_VISIBLE_DEVICES=0 tune run lora_finetune_single_device --config llama3_1_8B_instruct_lora.yaml
 ```
 
 LoRA адаптеры сохраняются в `./outputs/llama3_1_8b_instruct_lora/`.
