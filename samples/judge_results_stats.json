@@ -1,0 +1,11 @@
+{
+  "total_comparisons": 6553,
+  "base_wins": 2212,
+  "lora_wins": 4129,
+  "ties": 135,
+  "parse_errors": 77,
+  "avg_score_base": 3.71,
+  "avg_score_lora": 3.97,
+  "base_win_rate": 33.8,
+  "lora_win_rate": 63.0
+}
