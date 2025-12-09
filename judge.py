@@ -59,35 +59,6 @@ def load_jsonl(path: str) -> list[dict]:
     return data
 
 
-def extract_post_from_prompt(prompt: str) -> str:
-    """
-    Extract the original Reddit post from the Alpaca-style prompt.
-    
-    The prompt format is:
-    ### Instruction:
-    Summarize the following Reddit post...
-    
-    ### Input:
-    {post}
-    
-    ### Response:
-    """
-    try:
-        # Find the content between "### Input:" and "### Response:"
-        input_marker = "### Input:"
-        response_marker = "### Response:"
-        
-        start = prompt.find(input_marker)
-        end = prompt.find(response_marker)
-        
-        if start != -1 and end != -1:
-            post = prompt[start + len(input_marker):end].strip()
-            return post
-        return prompt
-    except Exception:
-        return prompt
-
-
 def load_judge_model(
     model_path: str,
     device: str = "cuda",
@@ -237,8 +208,8 @@ def run_judging(
     ) if show_progress else zip(base_results, lora_results)
     
     for base_item, lora_item in iterator:
-        # Extract original post from prompt
-        original_post = extract_post_from_prompt(base_item["input"])
+        # Read post directly from item (new format from inference.py)
+        original_post = base_item.get("post", "")
         ground_truth = base_item.get("ground_truth", "N/A")
         summary_a = base_item.get("model_output", "")
         summary_b = lora_item.get("model_output", "")
@@ -333,8 +304,8 @@ def main():
     parser.add_argument(
         "--judge_model_path",
         type=str,
-        default="./Qwen3-14B",
-        help="Path to Qwen3-14B judge model"
+        default="./Qwen3-32B",
+        help="Path to Qwen3-32B judge model"
     )
     
     # Processing options
